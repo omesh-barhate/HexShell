@@ -7,13 +7,24 @@
 #define MAX_INPUT_LENGTH 1024
 #define MAX_ARGS 64
 
+void handle_signal(int sig) {
+    if (sig == SIGINT) {
+        printf("Received SIGINT signal, terminating the current process.\n");
+        exit(EXIT_FAILURE);
+    } else if (sig == SIGTSTP) {
+        printf("Received SIGTSTP signal, stopping the current process.\n");
+        //TODO: Implement process suspension logic here
+    }
+}
 
 int main() {
   char input[MAX_INPUT_LENGTH];
   char *args[MAX_ARGS];
   pid_t pid;
   int status;
-
+  signal(SIGINT, handle_signal);
+  signal(SIGTSTP, handle_signal);
+    
   // Shell loop
   while (1) {
     // Prompt user for input
