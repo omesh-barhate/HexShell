@@ -6,12 +6,12 @@ This is a simple implementation of a shell program in C. The shell provides a co
 
 To compile the program, run the following command in the terminal:
 
-gcc shell.c -o shell -lncurses
+> gcc shell.c -o shell -lncurses
 
 
 To run the shell, simply execute the compiled binary:
 
-./shell
+> ./shell
 
 
 The shell will display a prompt (`>>`) and wait for user input. The user can enter commands, which will be executed by the shell. The shell provides built-in commands such as `cd` for changing the current working directory and `exit` for exiting the shell.
