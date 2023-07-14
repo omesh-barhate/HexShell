@@ -43,12 +43,12 @@ The shell provides two built-in commands:
 
 The shell can execute external commands by entering their name followed by any required arguments. For example:
 
->> ls -l
+> ls -l
 
 ### Command Pipelines
 The shell supports executing command pipelines using the `|` symbol. For example:
 
->> ls -l | grep shell
+> ls -l | grep shell
 
 This command lists files and directories in the current directory and pipes the output to `grep` to search for the word "shell".
 
@@ -56,7 +56,7 @@ This command lists files and directories in the current directory and pipes the 
 
 The shell supports input/output redirection using the `<`, `>`, and `>>` symbols. For example:
 
->> ls > files.txt
+> ls > files.txt
 
 This command lists files and directories in the current directory and redirects the output to a file named "files.txt".
 
@@ -64,7 +64,7 @@ This command lists files and directories in the current directory and redirects 
 
 To execute a command in the background, append an `&` symbol at the end of the command. For example:
 
->> sleep 10 &
+> sleep 10 &
 
 This command executes the `sleep` command in the background, causing the shell to return immediately.
 
