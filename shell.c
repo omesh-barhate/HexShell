@@ -5,7 +5,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
-#include <ncurses.h>
+#include <stdarg.h>
+#include <sys/time.h>
 
 #define MAX_INPUT_LENGTH 1024
 #define MAX_ARGS 64
@@ -15,7 +16,7 @@ pid_t background_processes[MAX_BACKGROUND_PROCESSES];
 int num_background_processes = 0;
 
 int redirect_input(const char* filename) {
-    // Open the file for reading and redirect standard input to it
+    //  redirect standard input to it
     FILE* file = fopen(filename, "r");
     if (file == NULL) {
         perror("fopen");
@@ -31,7 +32,7 @@ int redirect_input(const char* filename) {
 }
 
 int redirect_output(const char* filename) {
-    // Open the file for writing and redirect standard output to it
+    // redirect standard output to it
     FILE* file = fopen(filename, "w");
     if (file == NULL) {
         perror("fopen");
@@ -47,7 +48,7 @@ int redirect_output(const char* filename) {
 }
 
 int append_output(const char* filename) {
-    // Open the file for appending and redirect standard output to it
+    //  appending and redirect standard output to it
     FILE* file = fopen(filename, "a");
     if (file == NULL) {
         perror("fopen");
@@ -69,16 +70,21 @@ void restore_io() {
 }
 
 void handle_signal(int sig) {
-    if (sig == SIGINT) {
-        printw("\nReceived SIGINT signal, terminating the current process.\n");
-        refresh();
-        exit(EXIT_FAILURE);
-    } else if (sig == SIGTSTP) {
-        printw("\nReceived SIGTSTP signal, stopping the current process.\n");
-        refresh();
-        // TODO: Implement process suspension logic here
+    switch (sig) {
+        case SIGINT:
+            printf("\nReceived SIGINT signal. Terminating the current process.\n");
+            exit(EXIT_FAILURE);
+            break;
+        case SIGTSTP:
+            printf("\nReceived SIGTSTP signal. Stopping the current process.\n");
+            // TODO: Implement process suspension logic here
+            break;
+        default:
+            printf("\nReceived signal %d. Handling not implemented.\n", sig);
+            break;
     }
 }
+
 
 int execute_pipeline(char* commands[MAX_ARGS][MAX_ARGS], int num_commands) {
     int pipes[num_commands - 1][2];
@@ -139,19 +145,16 @@ int execute_pipeline(char* commands[MAX_ARGS][MAX_ARGS], int num_commands) {
 
             if (execvp(commands[i][0], commands[i]) == -1) {
                 perror("execvp");
-                exit(EXIT_FAILURE);
+                _exit(EXIT_FAILURE);  // Use _exit to avoid flushing buffers and calling atexit functions
             }
         } else if (pid < 0) {
-            // Error forking
             perror("fork");
             return -1;
         } else {
-            // Parent process
             pids[i] = pid;
         }
     }
 
-    // Close all pipes in the parent process
     for (i = 0; i < num_commands - 1; i++) {
         close(pipes[i][0]);
         close(pipes[i][1]);
@@ -169,73 +172,146 @@ int execute_pipeline(char* commands[MAX_ARGS][MAX_ARGS], int num_commands) {
     return 0;
 }
 
+void background_status() {
+    int i;
+    for (i = 0; i < num_background_processes; i++) {
+        pid_t bg_pid = background_processes[i];
+        int status;
+        int result = waitpid(bg_pid, &status, WNOHANG);
+
+        if (result == -1) {
+            perror("waitpid");
+        } else if (result == 0) {
+            printf("Background process %d is still running.\n", (int)bg_pid);
+        } else {
+            printf("Background process %d has terminated.\n", (int)bg_pid);
+            // TODO : implentation of cleanup can be done
+        }
+    }
+}
+
+volatile sig_atomic_t timeout_flag = 0;
+
+void timeout_handler(int signum) {
+    timeout_flag = 1;
+}
+
+void timed_command(char* command, int timeout_seconds, char* args[]) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        signal(SIGALRM, timeout_handler);
+        alarm(timeout_seconds);
+
+        if (execvp(command, args) == -1) {
+            perror("execvp");
+            exit(EXIT_FAILURE);
+        }
+    } else if (pid > 0) {
+        int status;
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("waitpid");
+            exit(EXIT_FAILURE);
+        }
+
+        alarm(0);
+
+        if (timeout_flag) {
+            printf("Timeout reached. Terminating process with PID %d.\n", pid);
+              if (kill(pid, SIGTERM) == -1) {
+                perror("kill");
+            }
+
+            if (waitpid(pid, &status, 0) == -1) {
+                perror("waitpid");
+            }
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        perror("fork");
+        exit(EXIT_FAILURE); 
+    }
+}
+
+
 int main() {
     char input[MAX_INPUT_LENGTH];
-    char *commands[MAX_ARGS][MAX_ARGS];
+    char ***commands = malloc(MAX_ARGS * sizeof(char **));
+    for (int i = 0; i < MAX_ARGS; i++) {
+        commands[i] = malloc(MAX_ARGS * sizeof(char *));
+    }
+
     int num_commands;
     pid_t pid;
     int status;
-
-    // Initialize ncurses
-    initscr();
-    cbreak();
-    noecho();
-    keypad(stdscr, TRUE);
 
     signal(SIGINT, handle_signal);
     signal(SIGTSTP, handle_signal);
 
     // Shell loop
     while (1) {
-        // Prompt user for input
-        printw(">> ");
-        refresh();
+       // Prompt user for input
+        printf(">> ");
+        fflush(stdout);
 
         // Read user input
-        getstr(input);
-	input[strcspn(input, "\n")] = '\0';
+        if (fgets(input, sizeof(input), stdin) == NULL) {
+            // Handle EOF or error
+            break;
+        }
+        input[strcspn(input, "\n")] = '\0';
 
-        // Parse user input into separate commands
         char *token = strtok(input, "|\n");
         num_commands = 0;
-        while (token != NULL && num_commands < MAX_ARGS) {
+       while (token != NULL && num_commands < MAX_ARGS) {
+            // Use dynamic memory allocation for command arguments
+            char **temp = malloc(MAX_ARGS * sizeof(char *));
+            if (temp == NULL) {
+                perror("malloc");
+                exit(EXIT_FAILURE);
+            }
+
             char *arg_token = strtok(token, " \t");
             int i = 0;
             while (arg_token != NULL && i < MAX_ARGS - 1) {
-                commands[num_commands][i++] = arg_token;
+                temp[i++] = strdup(arg_token);
+                if (temp[i - 1] == NULL) {
+                    perror("strdup");
+                    exit(EXIT_FAILURE);
+                }
                 arg_token = strtok(NULL, " \t");
             }
-            commands[num_commands][i] = NULL;
+            temp[i] = NULL;
 
+            memcpy(commands[num_commands], temp, MAX_ARGS * sizeof(char *));
             num_commands++;
             token = strtok(NULL, "|\n");
         }
 
-        // Check for built-in commands
-        if (strcmp(commands[0][0], "cd") == 0) {
-            // Handle cd command
-            if (chdir(commands[0][1]) != 0) {
-                perror("cd");
+
+        if (strcmp(commands[0][0], "bgstatus") == 0) {
+            background_status();
+            continue;
+        } else if (strcmp(commands[0][0], "timeout") == 0) {
+            if (commands[0][1] != NULL && commands[0][2] != NULL) {
+                int timeout_seconds = atoi(commands[0][1]);
+
+                timed_command(commands[0][2], timeout_seconds, commands[0] + 2);
+            } else {
+                printf("Usage: timeout <seconds> <command>\n");
             }
             continue;
         } else if (strcmp(commands[0][0], "exit") == 0) {
-            // Handle exit command
             break;
-        }
+        } 
 
-        // Fork process and execute commands
         pid = fork();
         if (pid == 0) {
-            // Child process
-
-            // Set up input redirection for the first command
             if (num_commands > 1) {
                 if (redirect_input(commands[0][1]) == -1) {
                     exit(EXIT_FAILURE);
                 }
             }
 
-            // Set up output redirection for the last command
             if (num_commands > 1) {
                 if (redirect_output(commands[num_commands - 1][2]) == -1) {
                     exit(EXIT_FAILURE);
@@ -243,57 +319,50 @@ int main() {
             }
 
             if (num_commands == 1) {
-                // Execute a single command
                 if (execvp(commands[0][0], commands[0]) == -1) {
                     perror("execvp");
-                    exit(EXIT_FAILURE);
+                    _exit(EXIT_FAILURE);
                 }
             } else {
-                // Execute a pipeline of commands
                 if (execute_pipeline(commands, num_commands) == -1) {
-                    exit(EXIT_FAILURE);
+                    _exit(EXIT_FAILURE);
                 }
             }
+
         } else if (pid < 0) {
-            // Error forking
             perror("fork");
         } else {
-            // Parent process
             if (commands[num_commands - 1][0][0] != '&') {
-                // Wait for foreground process to finish
                 do {
                     waitpid(pid, &status, WUNTRACED);
                 } while (!WIFEXITED(status) && !WIFSIGNALED(status));
             } else {
-                // Background process, add PID to the array
                 background_processes[num_background_processes++] = pid;
             }
 
-            // Check for completed background processes
             int i = 0;
-            while (i < num_background_processes) {
+            for (int i = num_background_processes - 1; i >= 0; i--) {
                 pid_t bg_pid = background_processes[i];
                 int result = waitpid(bg_pid, &status, WNOHANG);
                 if (result == -1) {
-                    // Error
                     perror("waitpid");
                 } else if (result > 0) {
-                    // Process completed, remove PID from the array
-                    int j;
-                    for (j = i; j < num_background_processes - 1; j++) {
+                    for (int j = i; j < num_background_processes - 1; j++) {
                         background_processes[j] = background_processes[j + 1];
                     }
                     num_background_processes--;
-                } else {
-                    i++;
                 }
             }
+
         }
+        for (int i = 0; i < num_commands; i++) {
+            for (int j = 0; commands[i][j] != NULL; j++) {
+                free(commands[i][j]);
+            }
+            free(commands[i]);
+        }
+    
     }
-
-    // Clean up ncurses
-    endwin();
-
     return 0;
 }
 
